@@ -4,15 +4,13 @@ import requests
 import re
 from io import BytesIO
 from PIL import Image
-from test import clean_up_pipeline
-
+from process_data import clean_up_pipeline
+import xlsxwriter
 
 API_KEY = "AIzaSyANUWlnh43MDqZ3SS0DqCRiR8ns_5aP5DY"
 YOUTUBE_API_URL = "https://www.googleapis.com/youtube/v3/channels"
 YOUTUBE_VIDEO_API_URL = "https://www.googleapis.com/youtube/v3/search"
 YOUTUBE_COMMENTS_API_URL = "https://www.googleapis.com/youtube/v3/commentThreads"
-
-stop_words = ['bị', 'bởi', 'cả', 'các', 'cái', 'cần', 'càng', 'chỉ', 'chiếc', 'cho', 'chứ', 'chưa', 'chuyện', 'có', 'có_thể', 'cứ', 'của', 'cùng', 'cũng', 'đã', 'đang', 'đây', 'để', 'đến_nỗi', 'đều', 'điều', 'do', 'đó', 'được', 'dưới', 'gì', 'khi', 'không', 'là', 'lại', 'lên', 'lúc', 'mà', 'mỗi', 'một_cách', 'này', 'nên', 'nếu', 'ngay', 'nhiều', 'như', 'nhưng', 'những', 'nơi', 'nữa', 'phải', 'qua', 'ra', 'rằng', 'rằng', 'rất', 'rất', 'rồi', 'sau', 'sẽ', 'so', 'sự', 'tại', 'theo', 'thì', 'trên', 'trước', 'từ', 'từng', 'và', 'vẫn', 'vào', 'vậy', 'vì', 'việc', 'với', 'vừa']
 
 
 def get_channel_id(url):
@@ -24,11 +22,11 @@ def get_channel_id(url):
 
 
 def get_recent_videos(channel_id):
-    """Lấy 10 video gần nhất của kênh."""
+    """Lấy 20 video gần nhất của kênh."""
     params = {
         "part": "snippet",
         "channelId": channel_id,
-        "maxResults": 10,
+        "maxResults": 20,
         "order": "date",
         "type": "video",
         "key": API_KEY
@@ -249,21 +247,13 @@ def main():
                 st.write(f"**Subscribers:** {data['Subscribers']}")
                 st.write(f"**Total Videos:** {data['Total_videos']}")
                 st.write(f"**Description:** {data['Description']}")
-            st.write("**Danh sách 10 video gần nhất**")
+            st.write("**Danh sách 20 video gần nhất**")
             # 🟢 Lưu danh sách video vào session_state để tránh reload mất dữ liệu
             if "Recent_videos" not in st.session_state:
                 st.session_state["Recent_videos"] = data["Recent_videos"]
 
             df_videos = pd.DataFrame(st.session_state["Recent_videos"])
             # 🟢 Thêm phần tải về CSV
-            if not df_videos.empty:
-                csv_data = df_videos.to_csv(index=False, encoding="utf-8-sig")
-                st.download_button(
-                    label="Tải danh sách video gần nhất về máy",
-                    data=csv_data,
-                    file_name="recent_videos.csv",
-                    mime="text/csv"
-                )
 
             # 🟢 Dropdown chọn video
             video_ids = [video["id"] for video in st.session_state["Recent_videos"]]
@@ -289,17 +279,9 @@ def main():
             st.dataframe(df_comments)
 
             # 🟢 Thêm phần tải về CSV
-            if not df_comments.empty:
-                csv_data = df_comments.to_csv(index=False, encoding="utf-8-sig")
 
-                st.download_button(
-                    label="Tải bảng bình luận về máy",
-                    data=csv_data,
-                    file_name="comments.csv",
-                    mime="text/csv"
-                )
             # 🟢 Nút lấy toàn bộ comment của tất cả video
-            if st.button("Lấy toàn bộ bình luận của 10 video"):
+            if st.button("Lấy toàn bộ bình luận của 20 video"):
                 all_comments = []
                 for video in st.session_state["Recent_videos"]:
                     comments = get_all_comments(video["id"], data["List_id"], video["title"])
@@ -312,31 +294,42 @@ def main():
             # 🟢 Hiển thị bảng toàn bộ bình luận nếu có
             if "all_video_comments" in st.session_state:
                 df_all_comments = pd.DataFrame(st.session_state["all_video_comments"])
-                df_all_comments['clean_comment'] = df_all_comments['comment'].apply(clean_up_pipeline)
-                df_videos = pd.DataFrame(st.session_state["Recent_videos"])
-                # gộp bảng
-                df_all_comments = df_all_comments.merge(
-                    df_videos[['id', 'views', 'comments']],
-                    left_on='video_id',
-                    right_on='id',
-                    how='left'
-                )
-                df_all_comments.drop(columns=['id'], inplace=True)
-                df_all_comments.rename(columns={'comments': 'total_comments'}, inplace=True)
-                df_all_comments.rename(columns={'views': 'total_views'}, inplace=True)
+
                 if not df_all_comments.empty:
                     st.write("### Toàn bộ bình luận của tất cả các video")
                     st.dataframe(df_all_comments)
 
                     # Tải về CSV
-                    csv_data = df_all_comments.to_csv(index=False, encoding="utf-8-sig")
-                    #csv_data['clean_comment'] = csv_data['comment'].apply(clean_up_pipeline)
-                    st.download_button(
-                        label="Tải toàn bộ bình luận về máy",
-                        data=csv_data,
-                        file_name="all_video_comments.csv",
-                        mime="text/csv"
-                    )
+            if st.button("📥 Tải file Excel tổng hợp (.xlsx)"):
+                excel_bytes = BytesIO()
+                with pd.ExcelWriter(excel_bytes, engine="xlsxwriter") as writer:
+                    # Sheet 1 - Thông tin kênh
+                    channel_info_df = pd.DataFrame([{
+                        "Ngày tạo": data["Created"],
+                        "Quốc gia": data["Country"],
+                        "Lượt đăng ký": data["Subscribers"],
+                        "Tổng số video": data["Total_videos"],
+                        "Mô tả kênh": data["Description"]
+                    }])
+                    channel_info_df.to_excel(writer, sheet_name="Thông tin kênh", index=False)
+
+                    # Sheet 2 - Danh sách video gần đây
+                    df_videos.to_excel(writer, sheet_name="Video gần đây", index=False)
+
+                    # Sheet 3 - Danh sách bình luận (ưu tiên lấy toàn bộ nếu có)
+                    df_all_comments = pd.DataFrame(
+                        st.session_state["all_video_comments"]
+                    ) if "all_video_comments" in st.session_state else df_comments
+                    df_all_comments['clean_comment'] = df_all_comments['comment'].apply(clean_up_pipeline)
+                    df_all_comments.to_excel(writer, sheet_name="Bình luận", index=False)
+
+                excel_bytes.seek(0)
+                st.download_button(
+                    label="📄 Tải xuống file Excel",
+                    data=excel_bytes,
+                    file_name="youtube_data.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
     elif page == "Statistical":
         st.title("Thống kê")
@@ -361,12 +354,17 @@ def main():
         st.title("Phân tích comment")
         uploaded_file = st.file_uploader("Tải lên file CSV", type=["csv"])
         if uploaded_file:
-            comment_data = analyze_comments(uploaded_file)
+            df = pd.read_csv(uploaded_file)
 
-            st.markdown("**Comment Analysis**")
-            st.text(f"Positive comments: {comment_data['Positive_comments']}")
-            st.text(f"Negative comments: {comment_data['Negative_comments']}")
-            st.text(f"Neutral comments: {comment_data['Neutral_comments']}")
+            # Gọi hàm tiền xử lý từ tienxuly.py
+            df_processed = main(df)
+
+            # Hiển thị kết quả sau xử lý
+            st.dataframe(df_processed)
+
+            # Tải xuống nếu muốn
+            csv = df_processed.to_csv(index=False, encoding="utf-8-sig")
+            st.download_button("Tải file kết quả", data=csv, file_name="processed_comments.csv", mime="text/csv")
 
     elif page == "Đề xuất":
         st.title("Đề xuất video")
