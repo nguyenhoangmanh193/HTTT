@@ -26,7 +26,7 @@ def get_recent_videos(channel_id):
     params = {
         "part": "snippet",
         "channelId": channel_id,
-        "maxResults": 20,
+        "maxResults": 10,
         "order": "date",
         "type": "video",
         "key": API_KEY
