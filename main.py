@@ -2,10 +2,16 @@ import streamlit as st
 import pandas as pd
 import requests
 import re
+import numpy as np
 from io import BytesIO
 from PIL import Image
 from process_data import clean_up_pipeline
 import xlsxwriter
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+import matplotlib.dates as mdates
 
 API_KEY = "AIzaSyANUWlnh43MDqZ3SS0DqCRiR8ns_5aP5DY"
 YOUTUBE_API_URL = "https://www.googleapis.com/youtube/v3/channels"
@@ -332,23 +338,354 @@ def main():
                 )
 
     elif page == "Statistical":
-        st.title("Thống kê")
-        uploaded_file = st.file_uploader("Tải lên file CSV", type=["csv"])
+        st.title("Thống kê Phân tích YouTube")
+        uploaded_file = st.file_uploader("Tải lên file Excel (.xlsx)", type=["xlsx"])
+
         if uploaded_file:
-            overview_data = profile_overview(uploaded_file)
-            stats_data = profile_stats(uploaded_file)
+            video_data = pd.read_excel(uploaded_file, sheet_name="Video gần đây")
+            channel_info = pd.read_excel(uploaded_file, sheet_name="Thông tin kênh")
 
-            st.markdown("**Profile Overview**")
-            st.text(f"Created: {overview_data['Created']}")
-            st.text(f"Added to ViralStat: {overview_data['Add_to_ViralStat']}")
-            st.text(f"Country: {overview_data['Country']}")
-            st.text(f"Subscribers: {overview_data['Subscribers']}")
-            st.text(f"Total_videos: {overview_data['Total_videos']}")
+            video_data['published_date'] = pd.to_datetime(video_data['published_date'])
+            video_data['title_length'] = video_data['title'].apply(lambda x: len(str(x)))
+            video_data['comment_view_ratio'] = video_data['comments'] / video_data['views']
+            video_data['month'] = video_data['published_date'].dt.to_period('M')
+            video_data['week'] = video_data['published_date'].dt.to_period('W')
+            video_data['day'] = video_data['published_date'].dt.to_period('D')
+            video_data['short_title'] = video_data['title'].apply(lambda x: (x[:40] + '...') if len(str(x)) > 40 else x)
 
-            st.markdown("**Profile Stats**")
-            st.text(f"Subscribers: {stats_data['Subscribers']}")
-            st.text(f"Total_view: {stats_data['Total_view']}")
-            st.text(f"Avg: {stats_data['Avg']}")
+            tab1, tab2, tab3, tab4, tab5 = st.tabs(
+                ["Tổng quan", "Phổ biến", "Tỷ lệ tương tác", "Hiệu suất", "Phân nhóm"])
+
+            with tab1:
+                st.subheader("Thông tin kênh")
+                st.write(f"**Ngày tạo:** {channel_info.iloc[0]['Ngày tạo']}")
+                st.write(f"**Quốc gia:** {channel_info.iloc[0]['Quốc gia']}")
+                st.write(f"**Lượt đăng ký:** {channel_info.iloc[0]['Lượt đăng ký']:,}")
+                st.write(f"**Tổng số video:** {channel_info.iloc[0]['Tổng số video']:,}")
+                st.write(f"**Mô tả:** {channel_info.iloc[0]['Mô tả kênh']}")
+
+            with tab2:
+                st.markdown("## 📊 So sánh Top 10 Videos (Mở rộng ngang, chữ nhỏ)")
+
+                col1, col2 = st.columns([1, 1])  # giữ nguyên chia 2 cột bằng nhau
+
+                with col1:
+                    st.markdown("### 👁️ Views")
+                    top10_views = video_data.sort_values(by='views', ascending=False).head(10)
+                    fig1 = plt.figure(figsize=(7, 3))  # rộng hơn, thấp hơn
+                    sns.barplot(data=top10_views, y='short_title', x='views', palette='Blues_r')
+                    plt.title('Top 10 by Views', fontsize=10)
+                    plt.xlabel('Views', fontsize=9)
+                    plt.ylabel('')
+                    plt.xticks(fontsize=8)
+                    plt.yticks(fontsize=7)
+                    plt.tight_layout()
+                    st.pyplot(fig1)
+
+                with col2:
+                    st.markdown("### 💬 Comments")
+                    top10_comments = video_data.sort_values(by='comments', ascending=False).head(10)
+                    fig2 = plt.figure(figsize=(7, 3))  # rộng hơn, thấp hơn
+                    sns.barplot(data=top10_comments, y='short_title', x='comments', palette='Oranges_r')
+                    plt.title('Top 10 by Comments', fontsize=10)
+                    plt.xlabel('Comments', fontsize=9)
+                    plt.ylabel('')
+                    plt.xticks(fontsize=8)
+                    plt.yticks(fontsize=7)
+                    plt.tight_layout()
+                    st.pyplot(fig2)
+
+            with tab3:
+                with st.expander("Theo bình luận và lượt xem"):
+                    st.markdown("### Bubble chart: Views vs Comments (Size = Comments/Views)")
+
+                    # Tạo layout với 2 cột
+                    col1, col2 = st.columns([7, 3])  # Cột bên trái chiếm 50% và cột bên phải chiếm 50%
+
+                    # --- Cột 1: Biểu đồ Bubble Chart ---
+                    with col1:
+                        plt.figure(figsize=(10, 6))  # Kích thước biểu đồ
+                        sizes = ((video_data['comments'] / video_data['views']) * 300000).clip(10, 5000)
+                        plt.scatter(video_data['views'], video_data['comments'], s=sizes, alpha=0.5, edgecolors='w')
+
+                        for i in range(len(video_data)):
+                            short_title = video_data['short_title'].iloc[i]
+                            plt.annotate(short_title,
+                                         (video_data['views'].iloc[i], video_data['comments'].iloc[i]),
+                                         fontsize=8, alpha=0.6)
+
+                        plt.title('Bubble Chart: Views vs Comments (Size = Comments/Views)', fontsize=12)
+                        plt.xlabel('Views', fontsize=10)
+                        plt.ylabel('Comments', fontsize=10)
+                        plt.grid(True)
+                        plt.tight_layout()
+                        st.pyplot(plt)
+                        # Tạo đường kẻ phân cách giữa hai cột
+                    st.markdown(
+                        """
+                        <style>
+                        .divider {
+                            border-left: 2px solid #D3D3D3;
+                            height: 100%;
+                            margin-left: 10px;
+                            margin-right: 10px;
+                        }
+                        </style>
+                        """, unsafe_allow_html=True
+                    )
+                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+                    # --- Cột 2: Hiển thị chữ "Sl" ---
+                    with col2:
+                        st.markdown("### Sl")
+                        st.write("Đây là phần dành cho chữ 'Sl'. Bạn có thể thay đổi nội dung theo yêu cầu.")
+
+                with st.expander("Tỉ lệ tương tác theo độ dài tiêu đề"):
+                    st.markdown("### Scatter: Title length vs Comments/Views")
+
+                    # Tạo layout với 2 cột, biểu đồ chiếm 70%, chữ "Sl" chiếm 30%
+                    col1, col2 = st.columns([7, 3])  # Cột bên trái chiếm 70% và cột bên phải chiếm 30%
+
+                    # --- Cột 1: Biểu đồ Scatter ---
+                    with col1:
+                        video_data['comment_view_ratio'] = video_data['comments'] / video_data['views']
+
+                        plt.figure(figsize=(10, 6))  # Kích thước biểu đồ
+                        sns.scatterplot(data=video_data, x='title_length', y='comment_view_ratio', color='green',
+                                        marker='o')
+
+                        plt.title('Title Length vs Comment/View Ratio', fontsize=12)
+                        plt.xlabel('Title Length', fontsize=10)
+                        plt.ylabel('Comment/View Ratio', fontsize=10)
+                        plt.grid(True)
+                        plt.tight_layout()
+                        st.pyplot(plt)
+
+                    # --- Cột 2: Hiển thị chữ "Sl" ---
+                    with col2:
+                        # Thêm đường phân cách giữa cột 1 và cột 2
+                        st.markdown(
+                            """
+                            <style>
+                            .divider {
+                                border-left: 2px solid #D3D3D3;
+                                height: 100%;
+                                margin-left: 10px;
+                                margin-right: 10px;
+                            }
+                            </style>
+                            """, unsafe_allow_html=True
+                        )
+                        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)  # Hiển thị đường phân cách
+
+                        # Nội dung cột 2
+                        st.markdown("### Sl")
+                        st.write("Đây là phần dành cho chữ 'Sl'. Bạn có thể thay đổi nội dung theo yêu cầu.")
+            with tab4:
+                # --- 6. Số video theo tháng, tuần, ngày ---
+
+                # Monthly stats (có đầy đủ tháng)
+                st.markdown("")
+                full_month_range = pd.period_range(start=video_data['month'].min(), end=video_data['month'].max(),
+                                                   freq='M')
+                monthly_stats = video_data.groupby('month').agg({
+                    'title': 'count',
+                    'views': 'sum',
+                    'comments': 'sum'
+                }).rename(columns={'title': 'video_count'})
+                monthly_stats = monthly_stats.reindex(full_month_range, fill_value=0)
+
+                # Weekly stats (có đầy đủ tuần)
+                full_week_range = pd.period_range(start=video_data['week'].min(), end=video_data['week'].max(),
+                                                  freq='W')
+                weekly_stats = video_data.groupby('week').agg({
+                    'title': 'count',
+                    'views': 'sum',
+                    'comments': 'sum'
+                }).rename(columns={'title': 'video_count'})
+                weekly_stats = weekly_stats.reindex(full_week_range, fill_value=0)
+
+                # Daily stats (có đầy đủ ngày)
+                full_day_range = pd.period_range(start=video_data['day'].min(), end=video_data['day'].max(), freq='D')
+                daily_stats = video_data.groupby('day').agg({
+                    'title': 'count',
+                    'views': 'sum',
+                    'comments': 'sum'
+                }).rename(columns={'title': 'video_count'})
+                daily_stats = daily_stats.reindex(full_day_range, fill_value=0)
+
+                # 6.1 Monthly - Số video theo tháng
+                st.markdown("Số video trên tháng")
+                plt.figure(figsize=(10, 5))
+                ax = monthly_stats['video_count'].plot(kind='bar', color='skyblue')
+                plt.title('Number of Videos per Month')
+                plt.tight_layout()
+                st.pyplot(plt)
+
+                # 6.2 Weekly - Số video theo tuần
+                st.markdown("Số video trên tuần")
+                plt.figure(figsize=(14, 6))
+                ax = weekly_stats['video_count'].plot(kind='bar', color='lightgreen')
+                plt.title('Number of Videos per Week')
+                plt.tight_layout()
+                st.pyplot(plt)
+
+                # 6.3 Daily - Số video theo ngày
+                st.markdown("Số video trên ngày")
+                plt.figure(figsize=(20, 6))
+                ax = daily_stats['video_count'].plot(kind='bar', color='lightcoral')
+                plt.title('Number of Videos per Day')
+                plt.tight_layout()
+                st.pyplot(plt)
+
+                # ------------------------------------
+                # 🎯 Tính trung bình views/comments CHỈ CHO NHỮNG NGÀY CÓ VIDEO
+                # (không dùng reindex)
+
+                monthly_avg = monthly_stats[monthly_stats['video_count'] > 0]
+                weekly_avg = weekly_stats[weekly_stats['video_count'] > 0]
+                daily_avg = daily_stats[daily_stats['video_count'] > 0]
+
+                monthly_avg['avg_views_per_video'] = monthly_avg['views'] / monthly_avg['video_count']
+                weekly_avg['avg_views_per_video'] = weekly_avg['views'] / weekly_avg['video_count']
+                daily_avg['avg_views_per_video'] = daily_avg['views'] / daily_avg['video_count']
+
+                monthly_avg['avg_comments_per_video'] = monthly_avg['comments'] / monthly_avg['video_count']
+                weekly_avg['avg_comments_per_video'] = weekly_avg['comments'] / weekly_avg['video_count']
+                daily_avg['avg_comments_per_video'] = daily_avg['comments'] / daily_avg['video_count']
+
+                # 6.4 Average Views per Video
+
+                # --- Monthly ---
+                st.markdown("Số Views trên tháng")
+                monthly_stats_nonzero = monthly_stats[monthly_stats['video_count'] > 0].copy()
+                monthly_stats_nonzero['avg_views_per_video'] = monthly_stats_nonzero['views'] / monthly_stats_nonzero[
+                    'video_count']
+                fig, ax = plt.subplots(figsize=(10, 5))
+                ax.plot(monthly_stats_nonzero.index.to_timestamp(), monthly_stats_nonzero['avg_views_per_video'],
+                        marker='o', color='orange', linestyle='-')
+                ax.xaxis.set_major_locator(mdates.MonthLocator())
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
+                plt.xticks(rotation=45)
+                plt.title('Average Views per Video per Month')
+                plt.xlabel('Month')
+                plt.ylabel('Avg Views per Video')
+                plt.grid(True)
+                plt.tight_layout()
+                st.pyplot(fig)
+
+                # --- Weekly ---
+                st.markdown("Số views trên tuần")
+                weekly_stats_nonzero = weekly_stats[weekly_stats['video_count'] > 0].copy()
+                weekly_stats_nonzero['avg_views_per_video'] = weekly_stats_nonzero['views'] / weekly_stats_nonzero[
+                    'video_count']
+                fig, ax = plt.subplots(figsize=(14, 6))
+                ax.plot(weekly_stats_nonzero.index.to_timestamp(), weekly_stats_nonzero['avg_views_per_video'],
+                        marker='o', color='blue', linestyle='-')
+                ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m'))
+                plt.xticks(rotation=45)
+                plt.title('Average Views per Video per Week')
+                plt.xlabel('Week')
+                plt.ylabel('Avg Views per Video')
+                plt.grid(True)
+                plt.tight_layout()
+                st.pyplot(fig)
+
+                # --- Daily ---
+                st.markdown("Số views trên ngày")
+                daily_stats_nonzero = daily_stats[daily_stats['video_count'] > 0].copy()
+                daily_stats_nonzero['avg_views_per_video'] = daily_stats_nonzero['views'] / daily_stats_nonzero[
+                    'video_count']
+                fig, ax = plt.subplots(figsize=(20, 6))
+                ax.plot(daily_stats_nonzero.index.to_timestamp(), daily_stats_nonzero['avg_views_per_video'],
+                        marker='o', color='green', linestyle='-')
+                ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m'))
+                plt.xticks(rotation=45)
+                plt.title('Average Views per Video per Day')
+                plt.xlabel('Day')
+                plt.ylabel('Avg Views per Video')
+                plt.grid(True)
+                plt.tight_layout()
+                st.pyplot(fig)
+
+                # 6.5 Average Comments per Video
+
+                # --- Monthly ---
+                st.markdown("Số comments trên tháng")
+                monthly_stats_nonzero['avg_comments_per_video'] = monthly_stats_nonzero['comments'] / \
+                                                                  monthly_stats_nonzero['video_count']
+                fig, ax = plt.subplots(figsize=(10, 5))
+                ax.plot(monthly_stats_nonzero.index.to_timestamp(), monthly_stats_nonzero['avg_comments_per_video'],
+                        marker='o', color='green', linestyle='-')
+                ax.xaxis.set_major_locator(mdates.MonthLocator())
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
+                plt.xticks(rotation=45)
+                plt.title('Average Comments per Video per Month')
+                plt.xlabel('Month')
+                plt.ylabel('Avg Comments per Video')
+                plt.grid(True)
+                plt.tight_layout()
+                st.pyplot(fig)
+
+                # --- Weekly ---
+                st.markdown("Số comments trên tuần")
+                weekly_stats_nonzero['avg_comments_per_video'] = weekly_stats_nonzero['comments'] / \
+                                                                 weekly_stats_nonzero['video_count']
+                fig, ax = plt.subplots(figsize=(14, 6))
+                ax.plot(weekly_stats_nonzero.index.to_timestamp(), weekly_stats_nonzero['avg_comments_per_video'],
+                        marker='o', color='purple', linestyle='-')
+                ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m'))
+                plt.xticks(rotation=45)
+                plt.title('Average Comments per Video per Week')
+                plt.xlabel('Week')
+                plt.ylabel('Avg Comments per Video')
+                plt.grid(True)
+                plt.tight_layout()
+                st.pyplot(fig)
+
+                # --- Daily ---
+                st.markdown("Số comments trên ngày")
+                daily_stats_nonzero['avg_comments_per_video'] = daily_stats_nonzero['comments'] / daily_stats_nonzero[
+                    'video_count']
+                fig, ax = plt.subplots(figsize=(20, 6))
+                ax.plot(daily_stats_nonzero.index.to_timestamp(), daily_stats_nonzero['avg_comments_per_video'],
+                        marker='o', color='red', linestyle='-')
+                ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m'))
+                plt.xticks(rotation=45)
+                plt.title('Average Comments per Video per Day')
+                plt.xlabel('Day')
+                plt.ylabel('Avg Comments per Video')
+                plt.grid(True)
+                plt.tight_layout()
+                st.pyplot(fig)
+
+            with tab5:
+                st.markdown("KMeans Clustering: Views vs Comments")
+                features = video_data[['views', 'comments']]
+                scaler = StandardScaler()
+                scaled_features = scaler.fit_transform(features)
+                kmeans = KMeans(n_clusters=4, random_state=42)
+                video_data['cluster'] = kmeans.fit_predict(scaled_features)
+
+                plt.figure(figsize=(10, 6))
+                sns.scatterplot(data=video_data, x='views', y='comments', hue='cluster', palette='Set2')
+                plt.title('KMeans Clustering')
+                st.pyplot(plt)
+
+                st.markdown("""
+                **Nhóm phân loại:**
+                - Nhóm 0: View cao, comment cao
+                - Nhóm 1: View cao, comment thấp
+                - Nhóm 2: View thấp, comment cao
+                - Nhóm 3: View thấp, comment thấp
+                """)
+
+            plt.show()
+            # --- Kết thúc ---
+            print("\n✅ Đã hiển thị toàn bộ biểu đồ!")
 
     elif page == "Phân tích comment":
         st.title("Phân tích comment")

@@ -37,4 +37,4 @@ lexicon = {
 }
 
 # Tạo đối tượng model sẵn để import
-model = SentimentModel(lexicon)
+model_football = SentimentModel(lexicon)
