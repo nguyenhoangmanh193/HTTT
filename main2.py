@@ -16,7 +16,9 @@ from model.model_title import model_title
 from model.model_information import  model_info
 from  model.model_football import model_football
 
-API_KEY = "AIzaSyANUWlnh43MDqZ3SS0DqCRiR8ns_5aP5DY"
+#API_KEY = "AIzaSyANUWlnh43MDqZ3SS0DqCRiR8ns_5aP5DY"
+API_KEY = "AIzaSyByJ01WdcsbNk53ifHvLiSrUCxAcjwuaZ4"
+
 YOUTUBE_API_URL = "https://www.googleapis.com/youtube/v3/channels"
 YOUTUBE_VIDEO_API_URL = "https://www.googleapis.com/youtube/v3/search"
 YOUTUBE_COMMENTS_API_URL = "https://www.googleapis.com/youtube/v3/commentThreads"
@@ -48,6 +50,7 @@ def get_recent_videos(channel_id):
 
     videos = []
     video_ids = []
+
 
     for item in data["items"]:
         video_id = item["id"]["videoId"]
@@ -221,16 +224,9 @@ def recommend_videos(uploaded_file):
 def main():
     st.set_page_config(layout="wide")
     st.sidebar.title("Chức năng")
-    page = st.sidebar.radio("Chọn trang", ["Tổng quan", "Crawl", "Statistical", "Phân tích comment", "Đề xuất"])
+    page = st.sidebar.radio("Chọn trang", ["Crawl", "Statistical", "Đề xuất"])
 
-    if page == "Tổng quan":
-        st.title("Tổng quan")
-        uploaded_file = st.file_uploader("Tải lên file CSV", type=["csv"])
-        if uploaded_file:
-            df = pd.read_csv(uploaded_file)
-            st.dataframe(df)
-
-    elif page == "Crawl":
+    if page == "Crawl":
         st.title("Crawl dữ liệu")
         url = st.text_input("Nhập URL kênh")
 
@@ -280,9 +276,13 @@ def main():
                         continue  # Bỏ qua phần tử lỗi
 
             selected_video = next(safe_video_generator(), None)
-            st.write(f"**Tiêu đề video:** {selected_video['title']}")
-            st.write(f"**Lượt xem:** {selected_video['views']}")
-            st.write(f"**Số bình luận:** {selected_video['comments']}")
+            st.write(selected_video)
+            try:
+                st.write(f"**Tiêu đề video:** {selected_video['title']}")
+                st.write(f"**Lượt xem:** {selected_video['views']}")
+                st.write(f"**Số bình luận:** {selected_video['comments']}")
+            except Exception as e:
+                st.write("Không thể hiển thị thông tin video.")
 
             # 🟢 Lấy bình luận chỉ khi chưa có
             if "video_comments" not in st.session_state or st.session_state["video_comments"][
@@ -360,6 +360,23 @@ def main():
 
             video_comment['clean_comment'] = video_comment['clean_comment'].astype(str)
 
+            #################
+            cleaned = clean_up_pipeline(channel_info['Mô tả kênh'][0])
+            label, words = model_title.classify_sentiment(cleaned)
+            st.write(label)
+            # st.write(words)
+            if label == '0':
+                video_comment['label'] = video_comment['clean_comment'].apply(
+                    lambda x: model_football.classify_sentiment(x)[0])
+            else:
+                video_comment['label'] = video_comment['clean_comment'].apply(
+                    lambda x: model_info.classify_sentiment(x)[0])
+
+
+
+
+
+            ##################
             video_data['published_date'] = pd.to_datetime(video_data['published_date'])
             video_data['title_length'] = video_data['title'].apply(lambda x: len(str(x)))
             video_data['comment_view_ratio'] = video_data['comments'] / video_data['views']
@@ -377,8 +394,9 @@ def main():
             with c2:
                 st.markdown("### 🔍 Theo dõi")
 
-            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-                ["Tổng quan", "Phổ biến", "Tỷ lệ tương tác", "Hiệu suất", "Phân nhóm", "Bảng"])
+            tab1, tab2, tab3, tab4, tab5, tab6 , tab7, tab8, tab9= st.tabs(
+                ["Tổng quan", "Phổ biến", "Tỷ lệ tương tác", "Hiệu suất", "Phân nhóm", "Tỉ lệ tổng quan",'Tỉ lệ theo thời gian', "Top video vi phạm",
+                 "Đánh giá tổng thể"])
 
             with tab1:
                 st.subheader("Thông tin kênh")
@@ -715,44 +733,134 @@ def main():
 
             with tab6:
                 st.markdown("Bảng ")
+                st.subheader("Dữ liệu bảng Bình luận")
+                st.write(label)
 
-                try:
-                    st.subheader("Dữ liệu bảng Bình luận")
-                    cleaned = clean_up_pipeline(channel_info['Mô tả kênh'][0])
-                    label, words = model_title.classify_sentiment(cleaned)
-                    st.write(label)
-                    st.write(words)
-                    if label=='0':
-                        video_comment['label'] = video_comment['clean_comment'].apply(lambda x: model_football.classify_sentiment(x)[0])
-                    else:
-                        video_comment['label'] = video_comment['clean_comment'].apply(lambda x: model_info.classify_sentiment(x)[0])
-                    st.write(video_comment.head(50))
+                # Tính toán số lượng các giá trị trong cột 'label'
+                label_counts = video_comment['label'].value_counts().sort_index()
+                labels = ['Tích cực' if i == 'bình thường' else 'Tiêu cực' for i in label_counts.index]
+
+                # Tạo layout 2 cột
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    # Biểu đồ tròn trong cột bên trái
+                    fig, ax = plt.subplots(figsize=(2.5, 2.5))  # Điều chỉnh kích thước tùy ý
+                    ax.pie(label_counts, labels=labels, autopct='%.1f%%',
+                           colors=['#66b3ff', '#ff6666'], startangle=140, textprops={'fontsize': 5})
+                    ax.set_title('Tỷ lệ cảm xúc', fontsize=7)
+                    st.pyplot(fig)
+
+                with col2:
+                    # Phần chữ hoặc nội dung bên phải
+                    st.markdown("### Phân tích cảm xúc")
+                    st.write(
+                        "Biểu đồ bên trái thể hiện tỷ lệ phần trăm các bình luận tích cực và tiêu cực. "
+                        "Dựa vào dữ liệu, bạn có thể nhận biết sự phân bố cảm xúc trong tập bình luận."
+                    )
+
+            with tab7:
+
+                # Đảm bảo cột 'publishedAt' là kiểu datetime
+                video_comment['publishedAt'] = pd.to_datetime(video_comment['publishedAt'])
+
+                # Tạo cột "3 ngày"
+                video_comment['3_days'] = video_comment['publishedAt'].dt.to_period('D').apply(lambda r: r.start_time).dt.floor(
+                    'D') + pd.to_timedelta(video_comment['publishedAt'].dt.day // 3 * 3, unit='D')
+
+                # Đếm số lượng bình luận theo khoảng 3 ngày và nhãn
+                count_by_3_days = video_comment.groupby(['3_days', 'label']).size().unstack(fill_value=0)
+
+                col1, col2 = st.columns([3, 2])  # 3 phần cho biểu đồ, 2 phần cho nội dung khác (tổng = 5 -> 60%)
+
+                with col1:
+                    fig, ax = plt.subplots(figsize=(6, 4))
+                    count_by_3_days.plot(kind='bar', ax=ax, color=['#66b3ff', '#ff6666'])
+
+                    ax.set_xlabel('Ngày (Mỗi 3 ngày)', fontsize=8)
+                    ax.set_ylabel('Số lượng bình luận', fontsize=8)
+                    ax.set_title('Số lượng bình luận theo mỗi 3 ngày và nhãn (0: Bình thường, 1: Toxic)', fontsize=9)
+                    ax.tick_params(axis='x', labelrotation=45, labelsize=7)
+                    ax.tick_params(axis='y', labelsize=7)
+                    ax.legend(title='Label', labels=count_by_3_days.columns.astype(str), fontsize=7, title_fontsize=8)
+
+                    plt.tight_layout()
+                    st.pyplot(fig)
+
+                with col2:
+                    st.markdown("### Thống kê")
+                    st.markdown("- Biểu đồ thể hiện số lượng bình luận theo từng khoảng 3 ngày.")
+                    st.markdown("- Màu xanh: Bình thường, Màu đỏ: Toxic.")
+
+            with tab8:
+                # Tính tổng số bình luận và số bình luận có label != 0 theo từng video
+                total_by_video = video_comment.groupby('video_title').size()
+                toxic_by_video = video_comment[video_comment['label'] != 'bình thường'].groupby('video_title').size()
+
+                # Tính tỷ lệ % và chọn top 10 video có tỷ lệ toxic cao nhất
+                toxic_percent = (toxic_by_video / total_by_video * 100).fillna(0)
+                top10_videos = toxic_percent.sort_values(ascending=False).head(10)
+
+                # Layout chia 2 cột: 60% - 40%
+                col1, col2 = st.columns([3, 2])
+
+                with col1:
+                    fig, ax = plt.subplots(figsize=(6, 4))
+                    ax.bar(range(1, 11), top10_videos.values, color='#ff6666')
+                    ax.set_xticks(range(1, 11))
+                    ax.set_xticklabels(range(1, 11))
+                    ax.set_ylabel('Tỷ lệ % bình luận toxic', fontsize=9)
+                    ax.set_title('Top 10 video có tỷ lệ bình luận toxic cao nhất', fontsize=10)
+                    ax.tick_params(labelsize=8)
+                    plt.tight_layout()
+                    st.pyplot(fig)
+
+                with col2:
+                    st.markdown("**Danh sách video tương ứng:**")
+                    video_labels = top10_videos.index.tolist()
+                    for i, title in enumerate(video_labels, start=1):
+                        st.markdown(f"{i}. {title}")
+
+            with tab9:
+
+                # Tính tổng số bình luận và số bình luận có label != 0 theo từng video
+                total_by_video = video_comment.groupby('video_title').size()
+                toxic_by_video = video_comment[video_comment['label'] != 'bình thường'].groupby('video_title').size()
+
+                # Tính tỷ lệ % và xác định video nào có tỷ lệ toxic > 11%
+                toxic_percent = (toxic_by_video / total_by_video * 100).fillna(0)
+
+                # Đánh dấu video tiêu cực (tỷ lệ toxic > 11%)
+                toxic_videos = toxic_percent[toxic_percent > 11].index
+                non_toxic_videos = toxic_percent[toxic_percent <= 11].index
+
+                # Tạo một Series với các video tiêu cực và không tiêu cực
+                video_labels = ['Tiêu cực' if video in toxic_videos else 'Không tiêu cực' for video in
+                                video_comment['video_title']]
+                labels_count = pd.Series(video_labels).value_counts()
+
+                # Tạo layout 2 cột với tỷ lệ 3:2 (60% và 40%)
+                col1, col2 = st.columns([1, 1])
+
+                with col1:
+                    fig, ax = plt.subplots(figsize=(3, 3))
+                    ax.pie(labels_count, labels=labels_count.index, autopct='%1.1f%%', startangle=90,
+                           colors=['#ff6666', '#66b3ff'])
+                    ax.set_title('Tỷ lệ video tiêu cực vs không tiêu cực', fontsize=10)
+                    plt.tight_layout()
+                    st.pyplot(fig)
+
+                with col2:
+                    st.markdown("**Phân loại video:**")
+                    for label, count in labels_count.items():
+                        st.markdown(f"- **{label}**: {count} video")
 
 
-                except ValueError:
-                    st.error("Không tìm thấy sheet 'Bình luận' trong file Excel.")
-                except Exception as e:
-                    st.error(f"Lỗi khi đọc file: {e}")
 
             plt.show()
             # --- Kết thúc ---
             print("\n✅ Đã hiển thị toàn bộ biểu đồ!")
 
-    elif page == "Phân tích comment":
-        st.title("Phân tích comment")
-        uploaded_file = st.file_uploader("Tải lên file CSV", type=["csv"])
-        if uploaded_file:
-            df = pd.read_csv(uploaded_file)
-
-            # Gọi hàm tiền xử lý từ tienxuly.py
-            df_processed = main(df)
-
-            # Hiển thị kết quả sau xử lý
-            st.dataframe(df_processed)
-
-            # Tải xuống nếu muốn
-            csv = df_processed.to_csv(index=False, encoding="utf-8-sig")
-            st.download_button("Tải file kết quả", data=csv, file_name="processed_comments.csv", mime="text/csv")
 
     elif page == "Đề xuất":
         st.title("Đề xuất video")

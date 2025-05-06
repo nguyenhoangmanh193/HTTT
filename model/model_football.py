@@ -15,13 +15,13 @@ class SentimentModel:
                 labels_found.update(self.lexicon[word])
 
         if 2 in labels_found:
-            return 2, matched_words
+            return 'xúc phạm', matched_words
         elif 1 in labels_found:
-            return 1, matched_words
+            return 'tiêu cực', matched_words
         elif 0 in labels_found:
-            return 0, matched_words
+            return 'bình thường', matched_words
         else:
-            return 0, []
+            return 'bình thường', []
 
 # Từ điển cảm xúc
 lexicon = {
