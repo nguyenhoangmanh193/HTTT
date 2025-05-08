@@ -25,11 +25,32 @@ YOUTUBE_COMMENTS_API_URL = "https://www.googleapis.com/youtube/v3/commentThreads
 
 
 def get_channel_id(url):
-    response = requests.get(url)
-    if response.status_code != 200:
+    # Nếu người dùng nhập trực tiếp channelId
+    if url.startswith("UC") and len(url) >= 24:
+        return url
+
+    # Nếu là dạng link /channel/UCxxx
+    match_channel = re.search(r"youtube\.com/channel/(UC[\w-]+)", url)
+    if match_channel:
+        return match_channel.group(1)
+
+    # Nếu là dạng handle @xxx → cần truy cập trang và dò externalId
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            print(f"⚠️ Không tải được trang: {url} (status {response.status_code})")
+            return None
+
+        match = re.search(r'"externalId":"(UC[\w-]+)"', response.text)
+        if match:
+            return match.group(1)
+        else:
+            print("⚠️ Không tìm thấy externalId trong HTML!")
+            return None
+    except Exception as e:
+        print(f"⚠️ Lỗi khi tải trang: {e}")
         return None
-    match = re.search(r'"externalId":"(UC[\w-]+)"', response.text)
-    return match.group(1) if match else None
+
 
 
 def get_recent_videos(channel_id):
@@ -252,7 +273,7 @@ def main():
                 st.write(f"**Subscribers:** {data['Subscribers']}")
                 st.write(f"**Total Videos:** {data['Total_videos']}")
                 st.write(f"**Description:** {data['Description']}")
-            st.write("**Danh sách 20 video gần nhất**")
+            st.write("**Danh sách 50 video gần nhất**")
             # 🟢 Lưu danh sách video vào session_state để tránh reload mất dữ liệu
             if "Recent_videos" not in st.session_state:
                 st.session_state["Recent_videos"] = data["Recent_videos"]
@@ -288,8 +309,7 @@ def main():
             if "video_comments" not in st.session_state or st.session_state["video_comments"][
                 "video_id"] != selected_video_id:
                 st.session_state["video_comments"] = {"video_id": selected_video_id,
-                                                      "comments": get_all_comments(selected_video_id, data['List_id'],
-                                                                                   selected_video['title'])}
+                                                      "comments": get_all_comments(selected_video_id, data['List_id'], selected_video['title'])}
 
             # 🟢 Hiển thị bình luận
             df_comments = pd.DataFrame(st.session_state["video_comments"]["comments"])
@@ -299,7 +319,7 @@ def main():
             # 🟢 Thêm phần tải về CSV
 
             # 🟢 Nút lấy toàn bộ comment của tất cả video
-            if st.button("Lấy toàn bộ bình luận của 20 video"):
+            if st.button("Lấy toàn bộ bình luận của 50 video"):
                 all_comments = []
                 for video in st.session_state["Recent_videos"]:
                     comments = get_all_comments(video["id"], data["List_id"], video["title"])
@@ -576,7 +596,7 @@ def main():
 
                 # --- Expander: Thống kê theo ngày ---
                 with st.expander("📅 Thống kê theo ngày", expanded=False):
-                    # 6.3 Daily - Số video theo ngày
+
                     st.markdown("Số video trên ngày")
                     plt.figure(figsize=(20, 6))
                     ax = daily_stats['video_count'].plot(kind='bar', color='lightcoral')
@@ -862,15 +882,133 @@ def main():
             print("\n✅ Đã hiển thị toàn bộ biểu đồ!")
 
 
+
     elif page == "Đề xuất":
+
         st.title("Đề xuất video")
-        uploaded_file = st.file_uploader("Tải lên file CSV", type=["csv"])
+
+        uploaded_file = st.file_uploader("Tải lên file Excel (.xlsx)", type=["xlsx"])
+
         if uploaded_file:
+
             recommendation_data = recommend_videos(uploaded_file)
 
             st.markdown("**Video Recommendations**")
+
             for video in recommendation_data["Recommended_videos"]:
                 st.text(video)
+
+        st.markdown("---")
+
+        st.subheader("📥 Crawl và đề xuất từ 5 kênh cố định")
+
+        youtube_channels = {
+
+            "BLV Anh Quân": "https://www.youtube.com/@blvanhquan68",
+
+            "BLV Mai Anh Tài": "https://www.youtube.com/@blvmaianhtai",
+
+            "Cảm Bóng Đá": "https://www.youtube.com/c/C%E1%BA%A3mB%C3%B3ng%C4%90%C3%A1",
+
+            "BLV Anh Quân Stories": "https://www.youtube.com/@blvanhquanstories5371",
+
+            "DaFootball VN": "https://www.youtube.com/@DaFootballVN"
+
+        }
+
+        if st.button("🔁 Cập nhật dữ liệu 5 kênh"):
+
+            all_videos = {}
+
+            for name, url in youtube_channels.items():
+
+                channel_id = get_channel_id(url)
+
+                if not channel_id:
+                    continue
+
+                videos = get_recent_videos(channel_id)[:20]
+
+                all_videos[name] = {
+
+                    "channel_id": channel_id,
+
+                    "videos": videos
+
+                }
+
+            st.session_state["all_videos"] = all_videos
+
+            st.success("Đã cập nhật dữ liệu từ 5 kênh!")
+
+        if "all_videos" in st.session_state:
+
+            selected_channel = st.selectbox("Chọn kênh", list(st.session_state["all_videos"].keys()))
+
+            channel_data = st.session_state["all_videos"][selected_channel]
+
+            video_list = channel_data["videos"]
+
+            if not video_list:
+                st.warning("Kênh không có video.")
+
+                st.stop()
+
+            selected_video_id = st.selectbox("Chọn video", [v["id"] for v in video_list],
+
+                                             format_func=lambda vid: next(
+                                                 v["title"] for v in video_list if v["id"] == vid))
+
+            selected_video = next((v for v in video_list if v["id"] == selected_video_id), None)
+
+            if selected_video:
+
+                st.markdown("### Thông tin video đã chọn")
+
+                st.write(f"**Tiêu đề:** {selected_video['title']}")
+
+                st.write(f"**Lượt xem:** {selected_video['views']}")
+
+                st.write(f"**Số bình luận:** {selected_video['comments']}")
+
+                st.write(f"**Ngày đăng:** {selected_video['published_date']}")
+
+                if st.button("📥 Lấy bình luận và xuất Excel"):
+
+                    comments = get_all_comments(selected_video_id, channel_data["channel_id"], selected_video["title"])
+
+                    if comments:
+
+                        df_comments = pd.DataFrame(comments)[
+                            ["video_id", "video_title", "author", "comment", "publishedAt"]]
+
+                        df_comments.insert(0, "channel_name", selected_channel)
+
+                        file_name = f"{selected_video['id']}_comments.xlsx"
+
+                        excel_bytes = BytesIO()
+
+                        with pd.ExcelWriter(excel_bytes, engine='xlsxwriter') as writer:
+
+                            df_comments.to_excel(writer, index=False, sheet_name="Comments")
+
+                        excel_bytes.seek(0)
+
+                        st.download_button(
+
+                            label="📄 Tải xuống bình luận",
+
+                            data=excel_bytes,
+
+                            file_name=file_name,
+
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+                        )
+
+                    else:
+
+                        st.warning("Không tìm thấy bình luận.")
 
 
 if __name__ == "__main__":
