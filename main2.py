@@ -25,11 +25,32 @@ YOUTUBE_COMMENTS_API_URL = "https://www.googleapis.com/youtube/v3/commentThreads
 
 
 def get_channel_id(url):
-    response = requests.get(url)
-    if response.status_code != 200:
+    # Nếu người dùng nhập trực tiếp channelId
+    if url.startswith("UC") and len(url) >= 24:
+        return url
+
+    # Nếu là dạng link /channel/UCxxx
+    match_channel = re.search(r"youtube\.com/channel/(UC[\w-]+)", url)
+    if match_channel:
+        return match_channel.group(1)
+
+    # Nếu là dạng handle @xxx → cần truy cập trang và dò externalId
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            print(f"⚠️ Không tải được trang: {url} (status {response.status_code})")
+            return None
+
+        match = re.search(r'"externalId":"(UC[\w-]+)"', response.text)
+        if match:
+            return match.group(1)
+        else:
+            print("⚠️ Không tìm thấy externalId trong HTML!")
+            return None
+    except Exception as e:
+        print(f"⚠️ Lỗi khi tải trang: {e}")
         return None
-    match = re.search(r'"externalId":"(UC[\w-]+)"', response.text)
-    return match.group(1) if match else None
+
 
 
 def get_recent_videos(channel_id):
@@ -252,7 +273,7 @@ def main():
                 st.write(f"**Subscribers:** {data['Subscribers']}")
                 st.write(f"**Total Videos:** {data['Total_videos']}")
                 st.write(f"**Description:** {data['Description']}")
-            st.write("**Danh sách 20 video gần nhất**")
+            st.write("**Danh sách 50 video gần nhất**")
             # 🟢 Lưu danh sách video vào session_state để tránh reload mất dữ liệu
             if "Recent_videos" not in st.session_state:
                 st.session_state["Recent_videos"] = data["Recent_videos"]
@@ -288,8 +309,7 @@ def main():
             if "video_comments" not in st.session_state or st.session_state["video_comments"][
                 "video_id"] != selected_video_id:
                 st.session_state["video_comments"] = {"video_id": selected_video_id,
-                                                      "comments": get_all_comments(selected_video_id, data['List_id'],
-                                                                                   selected_video['title'])}
+                                                      "comments": get_all_comments(selected_video_id, data['List_id'], selected_video['title'])}
 
             # 🟢 Hiển thị bình luận
             df_comments = pd.DataFrame(st.session_state["video_comments"]["comments"])
@@ -299,7 +319,7 @@ def main():
             # 🟢 Thêm phần tải về CSV
 
             # 🟢 Nút lấy toàn bộ comment của tất cả video
-            if st.button("Lấy toàn bộ bình luận của 20 video"):
+            if st.button("Lấy toàn bộ bình luận của 50 video"):
                 all_comments = []
                 for video in st.session_state["Recent_videos"]:
                     comments = get_all_comments(video["id"], data["List_id"], video["title"])
@@ -576,7 +596,7 @@ def main():
 
                 # --- Expander: Thống kê theo ngày ---
                 with st.expander("📅 Thống kê theo ngày", expanded=False):
-                    # 6.3 Daily - Số video theo ngày
+
                     st.markdown("Số video trên ngày")
                     plt.figure(figsize=(20, 6))
                     ax = daily_stats['video_count'].plot(kind='bar', color='lightcoral')
