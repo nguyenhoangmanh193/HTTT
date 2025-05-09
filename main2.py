@@ -27,30 +27,14 @@ YOUTUBE_COMMENTS_API_URL = "https://www.googleapis.com/youtube/v3/commentThreads
 
 
 def get_channel_id(url):
-    # Nếu người dùng nhập trực tiếp channelId
-    if url.startswith("UC") and len(url) >= 24:
-        return url
-
-    # Nếu là dạng link /channel/UCxxx
-    match_channel = re.search(r"youtube\.com/channel/(UC[\w-]+)", url)
-    if match_channel:
-        return match_channel.group(1)
-
-    # Nếu là dạng handle @xxx → cần truy cập trang và dò externalId
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url)
         if response.status_code != 200:
-            st.error(f"⚠️ Không tải được trang: {url} (status {response.status_code})")
             return None
-
         match = re.search(r'"externalId":"(UC[\w-]+)"', response.text)
-        if match:
-            return match.group(1)
-        else:
-            st.error("⚠️ Không tìm thấy externalId trong HTML!")
-            return None
+        return match.group(1) if match else None
     except Exception as e:
-        st.error(f"⚠️ Lỗi khi tải trang: {e}")
+        st.error(f"Lỗi khi lấy channel ID: {str(e)}")
         return None
 
 
@@ -68,13 +52,7 @@ def get_recent_videos(channel_id):
         response = requests.get(YOUTUBE_VIDEO_API_URL, params=params)
         data = response.json()
 
-        # Ẩn thông báo lỗi quota
-        if "error" in data:
-            # st.error(f"Lỗi API: {data['error']['message']}")
-            return []
-
         if "items" not in data:
-            # st.error("Không tìm thấy video nào")
             return []
 
         videos = []
@@ -101,109 +79,93 @@ def get_recent_videos(channel_id):
         stats_response = requests.get(stats_url, params=stats_params)
         stats_data = stats_response.json()
 
-        # Ẩn thông báo lỗi quota
-        if "error" in stats_data:
-            # st.error(f"Lỗi API khi lấy thống kê: {stats_data['error']['message']}")
-            return videos
-
         stats_dict = {item["id"]: item["statistics"] for item in stats_data.get("items", [])}
 
         for v in videos:
             vid = v["id"]
-            v["views"] = stats_dict.get(vid, {}).get("viewCount", "N/A")
-            v["comments"] = stats_dict.get(vid, {}).get("commentCount", "N/A")
+            v["views"] = int(stats_dict.get(vid, {}).get("viewCount", 0))
+            v["comments"] = int(stats_dict.get(vid, {}).get("commentCount", 0))
 
         return videos
     except Exception as e:
-        # st.error(f"Lỗi khi lấy video: {str(e)}")
+        st.error(f"Lỗi khi lấy danh sách video: {str(e)}")
         return []
 
 
-def get_all_comments(video_id, channel_id, video_title, max_retries=3):
-    """Lấy toàn bộ bình luận từ video, bao gồm cả phản hồi (replies). Có retry khi lỗi mạng."""
-    comments_list = []
-    next_page_token = None
-    total_fetched = 0
-    while True:
-        params = {
-            "part": "snippet,replies",
-            "videoId": video_id,
-            "maxResults": 100,
-            "textFormat": "plainText",
-            "key": API_KEY
-        }
-        if next_page_token:
-            params["pageToken"] = next_page_token
-        retries = 0
-        while retries < max_retries:
-            try:
-                response = requests.get(YOUTUBE_COMMENTS_API_URL, params=params, timeout=15)
-                if response.status_code == 200:
-                    break
-                else:
-                    retries += 1
-            except Exception as e:
-                retries += 1
-                if retries >= max_retries:
-                    print(f"⚠️ Lỗi khi tải bình luận video {video_id}: {e}")
-                    return comments_list
-        comments_data = response.json()
-        if "items" in comments_data:
-            for item in comments_data["items"]:
-                # Top-level comment
-                comment_snippet = item["snippet"]["topLevelComment"]["snippet"]
-                comments_list.append({
-                    "channel_id": channel_id,
-                    "video_id": video_id,
-                    "video_title": video_title,
-                    "author": comment_snippet["authorDisplayName"],
-                    "comment": comment_snippet["textDisplay"],
-                    "publishedAt": comment_snippet["publishedAt"],
-                    "is_reply": False,
-                    "reply_to": None
-                })
-                # Nếu có phản hồi (replies) thì duyệt thêm
-                if "replies" in item:
-                    for reply in item["replies"]["comments"]:
-                        reply_snippet = reply["snippet"]
-                        comments_list.append({
-                            "channel_id": channel_id,
-                            "video_id": video_id,
-                            "video_title": video_title,
-                            "author": reply_snippet["authorDisplayName"],
-                            "comment": reply_snippet["textDisplay"],
-                            "publishedAt": reply_snippet["publishedAt"],
-                            "is_reply": True,
-                            "reply_to": comment_snippet["authorDisplayName"]
-                        })
-        total_fetched += len(comments_data.get("items", []))
-        next_page_token = comments_data.get("nextPageToken")
-        if not next_page_token:
-            break
-    print(f"[LOG] Video {video_id} - {video_title}: {len(comments_list)} comments fetched.")
-    return comments_list
+def get_all_comments(video_id, channel_id, video_title):
+    """Lấy toàn bộ bình luận từ video, bao gồm cả phản hồi (replies)."""
+    try:
+        comments_list = []
+        next_page_token = None
+
+        while True:
+            params = {
+                "part": "snippet,replies",
+                "videoId": video_id,
+                "maxResults": 100,
+                "textFormat": "plainText",
+                "key": API_KEY
+            }
+            if next_page_token:
+                params["pageToken"] = next_page_token
+
+            response = requests.get(YOUTUBE_COMMENTS_API_URL, params=params)
+            comments_data = response.json()
+
+            if "items" in comments_data:
+                for item in comments_data["items"]:
+                    # Top-level comment
+                    comment_snippet = item["snippet"]["topLevelComment"]["snippet"]
+                    comments_list.append({
+                        "channel_id": channel_id,
+                        "video_id": video_id,
+                        "video_title": video_title,
+                        "author": comment_snippet["authorDisplayName"],
+                        "comment": comment_snippet["textDisplay"],
+                        "publishedAt": comment_snippet["publishedAt"],
+                        "is_reply": False,
+                        "reply_to": None
+                    })
+
+                    # Nếu có phản hồi (replies) thì duyệt thêm
+                    if "replies" in item:
+                        for reply in item["replies"]["comments"]:
+                            reply_snippet = reply["snippet"]
+                            comments_list.append({
+                                "channel_id": channel_id,
+                                "video_id": video_id,
+                                "video_title": video_title,
+                                "author": reply_snippet["authorDisplayName"],
+                                "comment": reply_snippet["textDisplay"],
+                                "publishedAt": reply_snippet["publishedAt"],
+                                "is_reply": True,
+                                "reply_to": comment_snippet["authorDisplayName"]
+                            })
+
+            next_page_token = comments_data.get("nextPageToken")
+            if not next_page_token:
+                break
+
+        return comments_list
+    except Exception as e:
+        st.error(f"Lỗi khi lấy bình luận: {str(e)}")
+        return []
 
 
-# Cập nhật phần crawl để hiển thị thông tin bình luận
 def crawl(url_channel):
     """Crawl thông tin kênh và danh sách video."""
-    channel_id = get_channel_id(url_channel)
-    if not channel_id:
-        # st.error("Không thể lấy được channel ID")
-        return None
-
     try:
+        channel_id = get_channel_id(url_channel)
+        if not channel_id:
+            st.error("Không tìm thấy channel ID!")
+            return None
+
         params = {"part": "snippet,statistics", "id": channel_id, "key": API_KEY}
         response = requests.get(YOUTUBE_API_URL, params=params)
         data = response.json()
 
-        # Ẩn thông báo lỗi quota (dòng đỏ)
-        if "error" in data:
-            # st.error(f"Lỗi API: {data['error']['message']}")
-            return None
-
         if "items" not in data or not data["items"]:
-            # st.error("Không tìm thấy thông tin kênh")
+            st.error("Không tìm thấy thông tin kênh!")
             return None
 
         channel_info = data["items"][0]
@@ -211,8 +173,6 @@ def crawl(url_channel):
         stats = channel_info["statistics"]
 
         recent_videos = get_recent_videos(channel_id)
-        if not recent_videos:
-            st.warning("Không lấy được danh sách video gần đây")
 
         return {
             "Created": snippet.get("publishedAt", "N/A")[:10],
@@ -225,7 +185,7 @@ def crawl(url_channel):
             "Recent_videos": recent_videos
         }
     except Exception as e:
-        # st.error(f"Lỗi khi crawl dữ liệu: {str(e)}")
+        st.error(f"Lỗi khi crawl dữ liệu: {str(e)}")
         return None
 
 
@@ -300,128 +260,131 @@ def main():
         url = st.text_input("Nhập URL kênh")
 
         if st.button("Tìm kiếm"):
-            st.session_state["channel_data"] = crawl(url)
-            if st.session_state["channel_data"] is None:
-                st.error("Không tìm thấy dữ liệu!")
-                st.stop()
+            with st.spinner("Đang tải dữ liệu..."):
+                st.session_state["channel_data"] = crawl(url)
+                if st.session_state["channel_data"] is None:
+                    st.error("Không tìm thấy dữ liệu!")
+                    st.stop()
 
         # Nếu đã có dữ liệu kênh
         if "channel_data" in st.session_state:
             data = st.session_state["channel_data"]
 
+            # Hiển thị thông tin kênh
             col1, col2 = st.columns([1, 3])
             with col1:
                 if data["Avatar"]:
-                    response = requests.get(data["Avatar"])
-                    image = Image.open(BytesIO(response.content))
-                    st.image(image, width=100)
+                    try:
+                        response = requests.get(data["Avatar"])
+                        image = Image.open(BytesIO(response.content))
+                        st.image(image, width=100)
+                    except Exception as e:
+                        st.error(f"Không thể tải ảnh đại diện: {str(e)}")
             with col2:
                 st.write(f"**Created:** {data['Created']}")
                 st.write(f"**Country:** {data['Country']}")
-                st.write(f"**Subscribers:** {data['Subscribers']}")
-                st.write(f"**Total Videos:** {data['Total_videos']}")
+                st.write(f"**Subscribers:** {data['Subscribers']:,}")
+                st.write(f"**Total Videos:** {data['Total_videos']:,}")
                 st.write(f"**Description:** {data['Description']}")
-            st.write("**Danh sách 50 video gần nhất**")
-            # 🟢 Lưu danh sách video vào session_state để tránh reload mất dữ liệu
+
+            # Hiển thị danh sách video
+            st.write("**Danh sách video gần nhất**")
             if "Recent_videos" not in st.session_state:
                 st.session_state["Recent_videos"] = data["Recent_videos"]
 
             df_videos = pd.DataFrame(st.session_state["Recent_videos"])
-            # 🟢 Thêm phần tải về CSV
+            if not df_videos.empty:
+                st.dataframe(df_videos[["title", "published_date", "views", "comments", "link"]])
 
-            # 🟢 Dropdown chọn video
-            video_ids = [video["id"] for video in st.session_state["Recent_videos"]]
-            selected_video_id = st.selectbox("Chọn video:", video_ids, format_func=lambda vid: next(
-                v["title"] for v in st.session_state["Recent_videos"] if v["id"] == vid))
+                # Dropdown chọn video
+                video_ids = [video["id"] for video in st.session_state["Recent_videos"]]
+                selected_video_id = st.selectbox(
+                    "Chọn video để xem bình luận:",
+                    video_ids,
+                    format_func=lambda vid: next(
+                        v["title"] for v in st.session_state["Recent_videos"] if v["id"] == vid
+                    )
+                )
 
-            # 🟢 Hiển thị thông tin video đã chọn
-            # selected_video = next(v for v in st.session_state["Recent_videos"] if v["id"] == selected_video_id)
-            def safe_video_generator():
-                for v in st.session_state["Recent_videos"]:
-                    try:
-                        if v["id"] == selected_video_id:
-                            yield v
-                    except Exception:
-                        continue  # Bỏ qua phần tử lỗi
+                # Hiển thị thông tin video đã chọn
+                selected_video = next(
+                    (v for v in st.session_state["Recent_videos"] if v["id"] == selected_video_id),
+                    None
+                )
+                if selected_video:
+                    st.write(f"**Tiêu đề video:** {selected_video['title']}")
+                    st.write(f"**Lượt xem:** {selected_video['views']:,}")
+                    st.write(f"**Số bình luận:** {selected_video['comments']:,}")
 
-            selected_video = next(safe_video_generator(), None)
-            st.write(selected_video)
-            try:
-                st.write(f"**Tiêu đề video:** {selected_video['title']}")
-                st.write(f"**Lượt xem:** {selected_video['views']}")
-                st.write(f"**Số bình luận:** {selected_video['comments']}")
-            except Exception as e:
-                st.write("Không thể hiển thị thông tin video.")
+                    # Lấy bình luận
+                    if "video_comments" not in st.session_state or st.session_state["video_comments"][
+                        "video_id"] != selected_video_id:
+                        with st.spinner("Đang tải bình luận..."):
+                            st.session_state["video_comments"] = {
+                                "video_id": selected_video_id,
+                                "comments": get_all_comments(
+                                    selected_video_id,
+                                    data['List_id'],
+                                    selected_video['title']
+                                )
+                            }
 
-            # 🟢 Lấy bình luận chỉ khi chưa có
-            if "video_comments" not in st.session_state or st.session_state["video_comments"][
-                "video_id"] != selected_video_id:
-                st.session_state["video_comments"] = {"video_id": selected_video_id,
-                                                      "comments": get_all_comments(selected_video_id, data['List_id'],
-                                                                                   selected_video['title'])}
+                    # Hiển thị bình luận
+                    df_comments = pd.DataFrame(st.session_state["video_comments"]["comments"])
+                    if not df_comments.empty:
+                        df_comments['clean_comment'] = df_comments['comment'].apply(clean_up_pipeline)
+                        st.dataframe(df_comments[["author", "comment", "publishedAt", "is_reply", "reply_to"]])
 
-            # 🟢 Hiển thị bình luận
-            df_comments = pd.DataFrame(st.session_state["video_comments"]["comments"])
-            df_comments['clean_comment'] = df_comments['comment'].apply(clean_up_pipeline)
-            st.dataframe(df_comments)
+                # Nút lấy toàn bộ comment
+                if st.button("Lấy toàn bộ bình luận của tất cả video"):
+                    all_comments = []
+                    progress_bar = st.progress(0)
+                    total_videos = len(st.session_state["Recent_videos"])
 
-            # 🟢 Thêm phần tải về CSV
+                    for i, video in enumerate(st.session_state["Recent_videos"]):
+                        with st.spinner(f"Đang tải bình luận video {i + 1}/{total_videos}..."):
+                            comments = get_all_comments(video["id"], data["List_id"], video["title"])
+                            all_comments.extend(comments)
+                        progress_bar.progress((i + 1) / total_videos)
 
-            # 🟢 Nút lấy toàn bộ comment của tất cả video
-            if st.button("Lấy toàn bộ bình luận của 50 video"):
-                all_comments = []
-                for video in st.session_state["Recent_videos"]:
-                    comments = get_all_comments(video["id"], data["List_id"], video["title"])
-                    all_comments.extend(comments)
+                    st.session_state["all_video_comments"] = all_comments
+                    st.success("Đã lấy xong toàn bộ bình luận!")
 
-                # Lưu toàn bộ comment vào session
-                st.session_state["all_video_comments"] = all_comments
-                st.success("Đã lấy xong toàn bộ bình luận!")
+                # Hiển thị và tải xuống dữ liệu
+                if "all_video_comments" in st.session_state:
+                    df_all_comments = pd.DataFrame(st.session_state["all_video_comments"])
+                    if not df_all_comments.empty:
+                        st.write("### Toàn bộ bình luận của tất cả các video")
+                        st.dataframe(df_all_comments[
+                                         ["video_title", "author", "comment", "publishedAt", "is_reply", "reply_to"]])
 
-            # 🟢 Hiển thị bảng toàn bộ bình luận nếu có
-            if "all_video_comments" in st.session_state:
-                df_all_comments = pd.DataFrame(st.session_state["all_video_comments"])
+                        # Tải về Excel trực tiếp khi bấm nút
+                        excel_bytes = BytesIO()
+                        with pd.ExcelWriter(excel_bytes, engine="xlsxwriter") as writer:
+                            # Sheet 1 - Thông tin kênh
+                            channel_info_df = pd.DataFrame([{
+                                "Ngày tạo": data["Created"],
+                                "Quốc gia": data["Country"],
+                                "Lượt đăng ký": data["Subscribers"],
+                                "Tổng số video": data["Total_videos"],
+                                "Mô tả kênh": data["Description"]
+                            }])
+                            channel_info_df.to_excel(writer, sheet_name="Thông tin kênh", index=False)
 
-                if not df_all_comments.empty:
-                    st.write("### Toàn bộ bình luận của tất cả các video")
-                    st.dataframe(df_all_comments)
+                            # Sheet 2 - Danh sách video gần đây
+                            df_videos.to_excel(writer, sheet_name="Video gần đây", index=False)
 
-            if st.button("📥 Tải file Excel tổng hợp (.xlsx)"):
-                folder_path = os.path.abspath("data")
-                os.makedirs(folder_path, exist_ok=True)
-                # Xóa các file cũ
-                delete_old_files(folder_path)
+                            # Sheet 3 - Danh sách bình luận
+                            df_all_comments['clean_comment'] = df_all_comments['comment'].apply(clean_up_pipeline)
+                            df_all_comments.to_excel(writer, sheet_name="Bình luận", index=False)
 
-                # Lấy tên kênh từ dữ liệu kênh
-                if data['Recent_videos'] and 'channel_name' in data['Recent_videos'][0]:
-                    channel_name = data['Recent_videos'][0]['channel_name']
-                else:
-                    channel_name = "unknown_channel"
-                channel_name = "".join(c for c in channel_name if c.isalnum() or c in (' ', '-', '_'))
-                excel_filename = f"{channel_name}.xlsx"
-                excel_path = os.path.join(folder_path, excel_filename)
-                with pd.ExcelWriter(excel_path, engine="xlsxwriter") as writer:
-                    # Sheet 1 - Thông tin kênh
-                    channel_info_df = pd.DataFrame([{
-                        "Ngày tạo": data["Created"],
-                        "Quốc gia": data["Country"],
-                        "Lượt đăng ký": data["Subscribers"],
-                        "Tổng số video": data["Total_videos"],
-                        "Mô tả kênh": data["Description"]
-                    }])
-                    channel_info_df.to_excel(writer, sheet_name="Thông tin kênh", index=False)
-
-                    # Sheet 2 - Danh sách video gần đây
-                    df_videos.to_excel(writer, sheet_name="Video gần đây", index=False)
-
-                    # Sheet 3 - Danh sách bình luận (ưu tiên lấy toàn bộ nếu có)
-                    df_all_comments = pd.DataFrame(
-                        st.session_state["all_video_comments"]
-                    ) if "all_video_comments" in st.session_state else df_comments
-                    df_all_comments['clean_comment'] = df_all_comments['comment'].apply(clean_up_pipeline)
-                    df_all_comments.to_excel(writer, sheet_name="Bình luận", index=False)
-
-                st.success(f"Đã lưu file vào: {excel_filename}")
+                        excel_bytes.seek(0)
+                        st.download_button(
+                            label="📥 Tải file Excel tổng hợp (.xlsx)",
+                            data=excel_bytes,
+                            file_name="youtube_data.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
 
     elif page == "Statistical":
         st.title("Thống kê Phân tích YouTube")
@@ -926,25 +889,7 @@ def main():
                     for label, count in labels_count.items():
                         st.markdown(f"- **{label}**: {count} video")
 
-            if st.button("📥 Lưu file Excel kết quả vào thư mục data"):
-                folder_path = os.path.abspath("data")
-                os.makedirs(folder_path, exist_ok=True)
-                # Xóa các file cũ
-                delete_old_files(folder_path)
 
-                # Lấy tên kênh từ dữ liệu kênh
-                if data['Recent_videos'] and 'channel_name' in data['Recent_videos'][0]:
-                    channel_name = data['Recent_videos'][0]['channel_name']
-                else:
-                    channel_name = "unknown_channel"
-                channel_name = "".join(c for c in channel_name if c.isalnum() or c in (' ', '-', '_'))
-                excel_filename = f"{channel_name}.xlsx"
-                excel_path = os.path.join(folder_path, excel_filename)
-                with pd.ExcelWriter(excel_path, engine="xlsxwriter") as writer:
-                    channel_info.to_excel(writer, sheet_name="Thông tin kênh", index=False)
-                    video_data.to_excel(writer, sheet_name="Video gần đây", index=False)
-                    video_comment.to_excel(writer, sheet_name="Bình luận", index=False)
-                st.success(f"Đã lưu file vào: {excel_filename}")
 
     elif page == "Đề xuất":
         st.title("Đề xuất video")
@@ -978,9 +923,9 @@ def main():
             # Lấy danh sách video
             video_titles = df_channel['video_title'].unique().tolist() if 'video_title' in df_channel.columns else []
             selected_video = st.selectbox("Chọn video", video_titles)
-            #df_video = df_channel[df_channel['video_title'] == selected_video]
-            # st.markdown("### Bình luận của video đã chọn")
-            # st.dataframe(df_video)
+            df_video = df_channel[df_channel['video_title'] == selected_video]
+            st.markdown("### Bình luận của video đã chọn")
+            st.dataframe(df_video)
         else:
             st.info("Chưa có dữ liệu. Hãy bấm 'Cập nhật dữ liệu' để crawl mới.")
 
