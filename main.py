@@ -17,6 +17,8 @@ from model.model_information import model_info
 from model.model_football import model_football
 import os
 import datetime
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 # API_KEY = "AIzaSyANUWlnh43MDqZ3SS0DqCRiR8ns_5aP5DY"
 API_KEY = "AIzaSyDTfRpLGpiImpanOKYi81MAdpIIC5uUTeU"
@@ -249,7 +251,20 @@ def delete_old_files(folder_path):
         except Exception as e:
             print(f"Lỗi khi xóa file {file_path}: {e}")
 
+# Hàm tính độ tương đồng giữa các tiêu đề video
+def get_related_videos(df, selected_video, num_suggestions=3):
+    video_titles = df['video_title'].dropna().unique().tolist()
+    if selected_video not in video_titles:
+        return []
 
+    vectorizer = TfidfVectorizer(stop_words='english')
+    tfidf_matrix = vectorizer.fit_transform(video_titles)
+    selected_idx = video_titles.index(selected_video)
+
+    cosine_similarities = cosine_similarity(tfidf_matrix[selected_idx], tfidf_matrix).flatten()
+    similar_indices = cosine_similarities.argsort()[-num_suggestions-1:-1][::-1]
+
+    return [video_titles[i] for i in similar_indices]
 def main():
     st.set_page_config(layout="wide")
     st.sidebar.title("Chức năng")
@@ -441,7 +456,7 @@ def main():
                 st.write(f"**Mô tả:** {channel_info.iloc[0]['Mô tả kênh']}")
 
             with tab2:
-                st.markdown("## 📊 So sánh Top 10 Videos (Mở rộng ngang, chữ nhỏ)")
+                st.markdown("## 📊 So sánh Top 10 Videos ")
 
                 col1, col2 = st.columns([1, 1])  # giữ nguyên chia 2 cột bằng nhau
 
@@ -473,50 +488,47 @@ def main():
 
             with tab3:
                 with st.expander("Theo bình luận và lượt xem"):
-                    st.markdown("### Bubble chart: Views vs Comments (Size = Comments/Views)")
+                    st.markdown("### Bubble chart: Views vs Comments")
 
                     # Tạo layout với 2 cột
                     col1, col2 = st.columns([7, 3])  # Cột bên trái chiếm 50% và cột bên phải chiếm 50%
 
                     # --- Cột 1: Biểu đồ Bubble Chart ---
+
+                    plt.figure(figsize=(10, 6))  # Kích thước biểu đồ
+                    sizes = ((video_data['comments'] / video_data['views']) * 300000).clip(10, 5000)
+                    plt.scatter(video_data['views'], video_data['comments'], s=sizes, alpha=0.5, edgecolors='w')
+
+                    for i in range(len(video_data)):
+                        short_title = video_data['short_title'].iloc[i]
+                        plt.annotate(short_title,
+                                     (video_data['views'].iloc[i], video_data['comments'].iloc[i]),
+                                     fontsize=8, alpha=0.6)
+
+                    plt.title('Bubble Chart: Views vs Comments (Size = Comments/Views)', fontsize=12)
+                    plt.xlabel('Views', fontsize=10)
+                    plt.ylabel('Comments', fontsize=10)
+                    plt.grid(True)
+                    plt.tight_layout()
                     with col1:
-                        plt.figure(figsize=(10, 6))  # Kích thước biểu đồ
-                        sizes = ((video_data['comments'] / video_data['views']) * 300000).clip(10, 5000)
-                        plt.scatter(video_data['views'], video_data['comments'], s=sizes, alpha=0.5, edgecolors='w')
-
-                        for i in range(len(video_data)):
-                            short_title = video_data['short_title'].iloc[i]
-                            plt.annotate(short_title,
-                                         (video_data['views'].iloc[i], video_data['comments'].iloc[i]),
-                                         fontsize=8, alpha=0.6)
-
-                        plt.title('Bubble Chart: Views vs Comments (Size = Comments/Views)', fontsize=12)
-                        plt.xlabel('Views', fontsize=10)
-                        plt.ylabel('Comments', fontsize=10)
-                        plt.grid(True)
-                        plt.tight_layout()
                         st.pyplot(plt)
-                        # Tạo đường kẻ phân cách giữa hai cột
-                    st.markdown(
-                        """
-                        <style>
-                        .divider {
-                            border-left: 2px solid #D3D3D3;
-                            height: 100%;
-                            margin-left: 10px;
-                            margin-right: 10px;
-                        }
-                        </style>
-                        """, unsafe_allow_html=True
-                    )
-                    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-                    # --- Cột 2: Hiển thị chữ "Sl" ---
                     with col2:
-                        st.markdown("### Sl")
-                        st.write("Đây là phần dành cho chữ 'Sl'. Bạn có thể thay đổi nội dung theo yêu cầu.")
+                        sizes = ((video_data['comments'] / video_data['views']) * 300000).clip(10, 5000)
+                        # Phân loại kích thước
+                        small_count = (sizes < 500).sum()
+                        medium_count = ((sizes >= 500) & (sizes < 2000)).sum()
+                        large_count = (sizes >= 2000).sum()
+                        total_count = small_count + medium_count + large_count
+                        # In kết quả
+                        # In kết quả với tỉ lệ %
+                        st.write("📊 **Độ tương tác:**")
+                        st.write(f"🔹 Tương tác thấp: {small_count} ({(small_count / total_count) * 100:.2f}%)")
+                        st.write(
+                            f"🔸 Tương tác trung bình: {medium_count} ({(medium_count / total_count) * 100:.2f}%)")
+                        st.write(f"🔴 Tương tác cao: {large_count} ({(large_count / total_count) * 100:.2f}%)")
 
                 with st.expander("Tỉ lệ tương tác theo độ dài tiêu đề"):
-                    st.markdown("### Scatter: Title length vs Comments/Views")
+                    st.markdown("### Tương quan giữa độ dài tiêu đề so với sự tương tác")
 
                     # Tạo layout với 2 cột, biểu đồ chiếm 70%, chữ "Sl" chiếm 30%
                     col1, col2 = st.columns([7, 3])  # Cột bên trái chiếm 70% và cột bên phải chiếm 30%
@@ -538,27 +550,10 @@ def main():
 
                     # --- Cột 2: Hiển thị chữ "Sl" ---
                     with col2:
-                        # Thêm đường phân cách giữa cột 1 và cột 2
-                        st.markdown(
-                            """
-                            <style>
-                            .divider {
-                                border-left: 2px solid #D3D3D3;
-                                height: 100%;
-                                margin-left: 10px;
-                                margin-right: 10px;
-                            }
-                            </style>
-                            """, unsafe_allow_html=True
-                        )
-                        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)  # Hiển thị đường phân cách
-
-                        # Nội dung cột 2
-                        st.markdown("### Sl")
-                        st.write("Đây là phần dành cho chữ 'Sl'. Bạn có thể thay đổi nội dung theo yêu cầu.")
+                       st.write("")
 
             with tab4:
-                st.markdown("### 📊 Phân tích số video và lượt tương tác theo thời gian")
+                st.markdown("### 📊 Tương tác theo thời gian")
                 # --- 6. Số video theo tháng, tuần, ngày ---
 
                 # Monthly stats (có đầy đủ tháng)
@@ -613,7 +608,7 @@ def main():
                     st.markdown("Số video trên ngày")
                     plt.figure(figsize=(20, 6))
                     ax = daily_stats['video_count'].plot(kind='bar', color='lightcoral')
-                    plt.title('Number of Videos per Day')
+                    plt.title('Số lượng video mỗi ngày')
                     plt.tight_layout()
                     st.pyplot(plt)
 
@@ -628,9 +623,9 @@ def main():
                     ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
                     ax.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m'))
                     plt.xticks(rotation=45)
-                    plt.title('Average Views per Video per Day')
+                    plt.title('Lượt xem trung bình theo ngày')
                     plt.xlabel('Day')
-                    plt.ylabel('Avg Views per Video')
+                    plt.ylabel('Lượt xem trung bình trên mỗi video')
                     plt.grid(True)
                     plt.tight_layout()
                     st.pyplot(fig)
@@ -646,9 +641,9 @@ def main():
                     ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
                     ax.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m'))
                     plt.xticks(rotation=45)
-                    plt.title('Average Comments per Video per Day')
+                    plt.title('Lượt comment trung bình theo ngày')
                     plt.xlabel('Day')
-                    plt.ylabel('Avg Comments per Video')
+                    plt.ylabel('Bình luận trung bình trên mỗi video')
                     plt.grid(True)
                     plt.tight_layout()
                     st.pyplot(fig)
@@ -659,7 +654,7 @@ def main():
                     st.markdown("Số video trên tuần")
                     plt.figure(figsize=(14, 6))
                     ax = weekly_stats['video_count'].plot(kind='bar', color='lightgreen')
-                    plt.title('Number of Videos per Week')
+                    plt.title('Số lượng video mỗi tuần')
                     plt.tight_layout()
                     st.pyplot(plt)
 
@@ -674,9 +669,9 @@ def main():
                     ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
                     ax.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m'))
                     plt.xticks(rotation=45)
-                    plt.title('Average Views per Video per Week')
+                    plt.title('Lượt xem trung bình theo tuần')
                     plt.xlabel('Week')
-                    plt.ylabel('Avg Views per Video')
+                    plt.ylabel('Lượt xem trung bình trên mỗi video')
                     plt.grid(True)
                     plt.tight_layout()
                     st.pyplot(fig)
@@ -691,9 +686,9 @@ def main():
                     ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
                     ax.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m'))
                     plt.xticks(rotation=45)
-                    plt.title('Average Comments per Video per Week')
+                    plt.title('Lượt comment trung bình theo tuần')
                     plt.xlabel('Week')
-                    plt.ylabel('Avg Comments per Video')
+                    plt.ylabel('Bình luận trung bình trên mỗi video')
                     plt.grid(True)
                     plt.tight_layout()
                     st.pyplot(fig)
@@ -703,7 +698,7 @@ def main():
                     st.markdown("Số video trên tháng")
                     plt.figure(figsize=(10, 5))
                     ax = monthly_stats['video_count'].plot(kind='bar', color='skyblue')
-                    plt.title('Number of Videos per Month')
+                    plt.title('Số lượng video mỗi tháng')
                     plt.tight_layout()
                     st.pyplot(plt)
 
@@ -719,9 +714,9 @@ def main():
                     ax.xaxis.set_major_locator(mdates.MonthLocator())
                     ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
                     plt.xticks(rotation=45)
-                    plt.title('Average Views per Video per Month')
+                    plt.title('Lượt xem trung bình cho mỗi video mỗi tháng')
                     plt.xlabel('Month')
-                    plt.ylabel('Avg Views per Video')
+                    plt.ylabel('Lượt xem trung bình trên mỗi video')
                     plt.grid(True)
                     plt.tight_layout()
                     st.pyplot(fig)
@@ -736,38 +731,59 @@ def main():
                     ax.xaxis.set_major_locator(mdates.MonthLocator())
                     ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
                     plt.xticks(rotation=45)
-                    plt.title('Average Comments per Video per Month')
+                    plt.title('Lượt comment trung bình theo tháng')
                     plt.xlabel('Month')
-                    plt.ylabel('Avg Comments per Video')
+                    plt.ylabel('Bình luận trung bình trên mỗi video')
                     plt.grid(True)
                     plt.tight_layout()
                     st.pyplot(fig)
 
             with tab5:
-                st.markdown("KMeans Clustering: Views vs Comments")
-                features = video_data[['views', 'comments']]
-                scaler = StandardScaler()
-                scaled_features = scaler.fit_transform(features)
-                kmeans = KMeans(n_clusters=4, random_state=42)
-                video_data['cluster'] = kmeans.fit_predict(scaled_features)
+                # Tựa đề
+                st.markdown("## 📊 Phân nhóm tương tác")
 
-                plt.figure(figsize=(10, 6))
-                sns.scatterplot(data=video_data, x='views', y='comments', hue='cluster', palette='Set2')
-                plt.title('KMeans Clustering')
-                st.pyplot(plt)
+                # Chia layout thành 2 cột
+                col1, col2 = st.columns(2)
 
-                st.markdown("""
-                **Nhóm phân loại:**
-                - Nhóm 0: View cao, comment cao
-                - Nhóm 1: View cao, comment thấp
-                - Nhóm 2: View thấp, comment cao
-                - Nhóm 3: View thấp, comment thấp
-                """)
+                # Phần bên trái: biểu đồ clustering
+                with col1:
+                    # Chuẩn bị dữ liệu và chuẩn hóa
+                    features = video_data[['views', 'comments']]
+                    scaler = StandardScaler()
+                    scaled_features = scaler.fit_transform(features)
+
+                    # Phân cụm KMeans
+                    kmeans = KMeans(n_clusters=4, random_state=42)
+                    video_data['cluster'] = kmeans.fit_predict(scaled_features)
+
+                    # Vẽ biểu đồ phân cụm
+                    plt.figure(figsize=(6, 4))
+                    sns.scatterplot(data=video_data, x='views', y='comments', hue='cluster', palette='Set2')
+                    plt.title('Các nhóm tương tác')
+                    plt.xlabel('Views')
+                    plt.ylabel('Comments')
+                    st.pyplot(plt)
+
+                # Phần bên phải: thống kê tỷ lệ phần trăm các nhóm
+                with col2:
+                    st.markdown("### 🧭 Phân loại:")
+                    st.markdown("""
+                    - 🟢 **Nhóm 0**: View cao, comment cao  
+                    - 🔵 **Nhóm 1**: View cao, comment thấp  
+                    - 🟣 **Nhóm 2**: View thấp, comment cao  
+                    - 🟠 **Nhóm 3**: View thấp, comment thấp
+                    """)
+
+                    # Tính tỷ lệ phần trăm của từng nhóm
+                    group_counts = video_data['cluster'].value_counts(normalize=True) * 100
+
+                    st.markdown("### 🔢 Tỷ lệ phần trăm các nhóm:")
+
+                    for cluster_id in group_counts.index:
+                        st.write(f"🔸 Nhóm {cluster_id}: {group_counts[cluster_id]:.2f}%")
 
             with tab6:
-                st.markdown("Bảng ")
-                st.subheader("Dữ liệu bảng Bình luận")
-                st.write(label)
+
 
                 # Tính toán số lượng các giá trị trong cột 'label'
                 label_counts = video_comment['label'].value_counts().sort_index()
@@ -781,20 +797,17 @@ def main():
                     fig, ax = plt.subplots(figsize=(2.5, 2.5))  # Điều chỉnh kích thước tùy ý
                     ax.pie(label_counts, labels=labels, autopct='%.1f%%',
                            colors=['#66b3ff', '#ff6666'], startangle=140, textprops={'fontsize': 5})
-                    ax.set_title('Tỷ lệ cảm xúc', fontsize=7)
+                    ax.set_title('Tỉ lệ comment toxic', fontsize=7)
                     st.pyplot(fig)
 
                 with col2:
-                    # Phần chữ hoặc nội dung bên phải
-                    st.markdown("### Phân tích cảm xúc")
-                    st.write(
-                        "Biểu đồ bên trái thể hiện tỷ lệ phần trăm các bình luận tích cực và tiêu cực. "
-                        "Dựa vào dữ liệu, bạn có thể nhận biết sự phân bố cảm xúc trong tập bình luận."
-                    )
+
+                    st.markdown("###")
+
 
             with tab7:
 
-                # Đảm bảo cột 'publishedAt' là kiểu datetime
+
                 video_comment['publishedAt'] = pd.to_datetime(video_comment['publishedAt'])
 
                 # Tạo cột "3 ngày"
@@ -805,7 +818,7 @@ def main():
                 # Đếm số lượng bình luận theo khoảng 3 ngày và nhãn
                 count_by_3_days = video_comment.groupby(['3_days', 'label']).size().unstack(fill_value=0)
 
-                col1, col2 = st.columns([3, 2])  # 3 phần cho biểu đồ, 2 phần cho nội dung khác (tổng = 5 -> 60%)
+                col1, col2 = st.columns([3, 2])
 
                 with col1:
                     fig, ax = plt.subplots(figsize=(6, 4))
@@ -822,9 +835,8 @@ def main():
                     st.pyplot(fig)
 
                 with col2:
-                    st.markdown("### Thống kê")
-                    st.markdown("- Biểu đồ thể hiện số lượng bình luận theo từng khoảng 3 ngày.")
-                    st.markdown("- Màu xanh: Bình thường, Màu đỏ: Toxic.")
+                    st.markdown("###")
+
 
             with tab8:
                 # Tính tổng số bình luận và số bình luận có label != 0 theo từng video
@@ -835,7 +847,7 @@ def main():
                 toxic_percent = (toxic_by_video / total_by_video * 100).fillna(0)
                 top10_videos = toxic_percent.sort_values(ascending=False).head(10)
 
-                # Layout chia 2 cột: 60% - 40%
+
                 col1, col2 = st.columns([3, 2])
 
                 with col1:
@@ -869,7 +881,7 @@ def main():
                 non_toxic_videos = toxic_percent[toxic_percent <= 11].index
 
                 # Tạo một Series với các video tiêu cực và không tiêu cực
-                video_labels = ['Tiêu cực' if video in toxic_videos else 'Không tiêu cực' for video in
+                video_labels = ['Toxic' if video in toxic_videos else 'Bình thường' for video in
                                 video_comment['video_title']]
                 labels_count = pd.Series(video_labels).value_counts()
 
@@ -880,126 +892,243 @@ def main():
                     fig, ax = plt.subplots(figsize=(3, 3))
                     ax.pie(labels_count, labels=labels_count.index, autopct='%1.1f%%', startangle=90,
                            colors=['#ff6666', '#66b3ff'])
-                    ax.set_title('Tỷ lệ video tiêu cực vs không tiêu cực', fontsize=10)
+                    ax.set_title('Tỷ lệ video toxic', fontsize=8)
                     plt.tight_layout()
                     st.pyplot(fig)
 
                 with col2:
-                    st.markdown("**Phân loại video:**")
-                    for label, count in labels_count.items():
-                        st.markdown(f"- **{label}**: {count} video")
+                    st.markdown("### 🧭 Đánh giá:")
+                    toxic_ratio = labels_count.get("Toxic", 0) / sum(labels_count) * 100
 
-            if st.button("📥 Lưu file Excel kết quả vào thư mục data"):
-                folder_path = os.path.abspath("data")
-                os.makedirs(folder_path, exist_ok=True)
-                # Xóa các file cũ
-                delete_old_files(folder_path)
+                    if toxic_ratio < 5:
+                        st.markdown("🟢 **Kênh là một kênh lành mạnh, ít nội dung, thành phần không phù hợp**")
+                    elif toxic_ratio < 20:
+                        st.markdown("🟡 **Kênh là kênh tốt, nội dung, thành phần không phù hợp không đáng kể**")
+                    elif toxic_ratio < 40:
+                        st.markdown("🟠 **Kênh chứa khá nhiều thành phần, nội dung không phù hợp**")
+                    else:
+                        st.markdown("🔴 **Không khuyến nghị xem kênh này**")
 
-                # Lấy tên kênh từ dữ liệu kênh
-                if data['Recent_videos'] and 'channel_name' in data['Recent_videos'][0]:
-                    channel_name = data['Recent_videos'][0]['channel_name']
-                else:
-                    channel_name = "unknown_channel"
-                channel_name = "".join(c for c in channel_name if c.isalnum() or c in (' ', '-', '_'))
-                excel_filename = f"{channel_name}.xlsx"
-                excel_path = os.path.join(folder_path, excel_filename)
-                with pd.ExcelWriter(excel_path, engine="xlsxwriter") as writer:
-                    channel_info.to_excel(writer, sheet_name="Thông tin kênh", index=False)
-                    video_data.to_excel(writer, sheet_name="Video gần đây", index=False)
-                    video_comment.to_excel(writer, sheet_name="Bình luận", index=False)
-                st.success(f"Đã lưu file vào: {excel_filename}")
+
+
+
 
     elif page == "Đề xuất":
+
         st.title("Đề xuất video")
 
         # XÓA phần tải lên file Excel
+
         # uploaded_file = st.file_uploader("Tải lên file Excel (.xlsx)", type=["xlsx"])
+
         # if uploaded_file:
+
         #     recommendation_data = recommend_videos(uploaded_file)
+
         #     st.markdown("**Video Recommendations**")
+
         #     for video in recommendation_data["Recommended_videos"]:
+
         #         st.text(video)
 
         st.markdown("---")
+
         st.subheader("📥 Crawl và đề xuất từ 5 kênh cố định")
 
         excel_path = os.path.join("data", "all_channels_comments.xlsx")
+
         df_all_comments = None
+
         if os.path.exists(excel_path):
+
             try:
+
                 df_all_comments = pd.read_excel(excel_path)
+
+
             except Exception as e:
+
                 st.warning(f"Không đọc được file Excel: {e}")
 
         # Hiển thị dữ liệu từ file nếu có
+
         if df_all_comments is not None and not df_all_comments.empty:
+
+            # Thêm cột video_url nếu chưa có
+
+            if 'video_url' not in df_all_comments.columns and 'video_id' in df_all_comments.columns:
+                df_all_comments['video_url'] = "https://www.youtube.com/watch?v=" + df_all_comments['video_id'].astype(str)
+
+
+            #st.write(df_all_comments.head(10))
             # Lấy danh sách kênh
             channel_names = df_all_comments[
                 'channel_name'].unique().tolist() if 'channel_name' in df_all_comments.columns else []
+
             selected_channel = st.selectbox("Chọn kênh", channel_names)
+
             df_channel = df_all_comments[df_all_comments['channel_name'] == selected_channel]
+
             # Lấy danh sách video
+
             video_titles = df_channel['video_title'].unique().tolist() if 'video_title' in df_channel.columns else []
+
             selected_video = st.selectbox("Chọn video", video_titles)
-            df_video = df_channel[df_channel['video_title'] == selected_video]
-            st.markdown("### Bình luận của video đã chọn")
-            st.dataframe(df_video)
+
+            #df_video = df_channel[df_channel['video_title'] == selected_video]
+
+            # st.markdown("### Bình luận của video đã chọn")
+            #
+            # st.dataframe(df_video)
+
+            #  Hiển thị đề xuất từ tất cả kênh (dựa trên selected_video)
+
+            related_videos = get_related_videos(df_all_comments, selected_video)
+
+            st.markdown("### 🎯 Video đề xuất")
+
+            for video in related_videos:
+
+                video_df = df_all_comments[df_all_comments['video_title'] == video]
+
+                if video_df.empty:
+                    continue
+
+                video_row = video_df.iloc[0]
+
+                video_url = video_row.get('video_url', '#')
+
+                channel_name = video_row.get('channel_name', 'Không rõ')
+
+                published_date = pd.to_datetime(video_df['publishedAt'], errors='coerce').min()
+
+                published_date_str = published_date.strftime('%d/%m/%Y') if pd.notnull(published_date) else 'Không rõ'
+                percentage =  ((video_df['label'] != 'bình thường').sum() / len(video_df)) * 100
+                toxic_note = ""
+                if percentage > 20:
+                    toxic_note = '<span style="color:red"><b>⚠️ Video có nhiều thành phần toxic</b></span>'
+
+                st.markdown(f"""
+
+                    **{video}**    
+
+                    📺 Kênh: *{channel_name}*  
+
+                    📅 Ngày đăng: *{published_date_str}*  
+                    
+                    Tỉ lệ toxic (%): *{percentage:.2f}*
+
+                    🔗 [Xem video]({video_url})
+                     
+                    {toxic_note}
+                         
+                                """,unsafe_allow_html=True)
+
         else:
+
             st.info("Chưa có dữ liệu. Hãy bấm 'Cập nhật dữ liệu' để crawl mới.")
 
         youtube_channels = {
+
             "BLV Anh Quân": "https://www.youtube.com/@blvanhquan68",
+
             "BLV Mai Anh Tài": "https://www.youtube.com/@blvmaianhtai",
+
             "Cảm Bóng Đá": "https://www.youtube.com/c/C%E1%BA%A3mB%C3%B3ng%C4%90%C3%A1",
+
             "BLV Anh Quân Stories": "https://www.youtube.com/@blvanhquanstories5371",
+
             "DaFootball VN": "https://www.youtube.com/@DaFootballVN"
+
         }
 
         if st.button("🔄 Cập nhật dữ liệu"):
+
             all_videos = {}
+
             channel_info_list = []
+
             all_comments = []
+
             for name, url in youtube_channels.items():
+
                 channel_id = get_channel_id(url)
+
                 if not channel_id:
                     continue
+
                 videos = get_recent_videos(channel_id)[:20]
+
                 all_videos[name] = {
+
                     "channel_id": channel_id,
+
                     "videos": videos
+
                 }
+
                 channel_data = crawl(f"https://www.youtube.com/channel/{channel_id}")
+
                 channel_info_list.append({
+
                     "Tên kênh": name,
+
                     "Ngày tạo": channel_data["Created"] if channel_data else '',
+
                     "Quốc gia": channel_data["Country"] if channel_data else '',
+
                     "Lượt đăng ký": channel_data["Subscribers"] if channel_data else '',
+
                     "Tổng số video": channel_data["Total_videos"] if channel_data else '',
+
                     "Mô tả kênh": channel_data["Description"] if channel_data else ''
+
                 })
+
                 for v in videos:
+
                     comments = get_all_comments(v["id"], channel_id, v["title"])
+
                     for c in comments:
                         c["channel_name"] = name
+
                         all_comments.append(c)
+
             st.session_state["all_videos"] = all_videos
+
             folder_path = os.path.abspath("data")
+
             os.makedirs(folder_path, exist_ok=True)
+
             delete_old_files(folder_path)
+
             excel_filename = "all_channels_comments.xlsx"
+
             excel_path = os.path.join(folder_path, excel_filename)
+
             df_all_comments = pd.DataFrame(all_comments)
+
             crawl_columns = [
+
                 "channel_name", "channel_id", "video_id", "video_title", "author", "comment", "publishedAt", "is_reply",
+
                 "reply_to"
+
             ]
             for col in crawl_columns:
+
                 if col not in df_all_comments.columns:
                     df_all_comments[col] = ''
             df_all_comments = df_all_comments[crawl_columns]
+            df_all_comments['clean_comment'] = df_all_comments['comment'].apply(clean_up_pipeline)
+            df_all_comments['label'] = df_all_comments['clean_comment'].apply(
+                 lambda x: model_football.classify_sentiment(x)[0])
             with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
+
                 df_all_comments.to_excel(writer, sheet_name="Bình luận", index=False)
+
             st.success(f"Đã lưu toàn bộ bình luận của 5 kênh vào file: {excel_filename}")
+
             st.rerun()
 
 
